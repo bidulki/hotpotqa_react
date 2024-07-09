@@ -3,6 +3,10 @@ from openai import OpenAI
 client = OpenAI()
 import re
 from utils import normalize_answer
+from search import (
+    EmbeddingFaiss,
+    BM25
+)
 from prompt import (
     SYSTEM_MESSAGE, 
     INSIGHTS,
@@ -27,24 +31,17 @@ def log_message(messages):
     return messages[-1]['content']
 
 class ReactAgent():
-    def __init__(self, dataset, df, wiki_index, explorer, model, max_step):
+    def __init__(self, dataset, df, wiki_index, search_engine, explorer, model, max_step):
         self.dataset = dataset
         self.df = df
         self.wiki_index = wiki_index
-        self.explorer = explorer
+        self.search_mode = search_engine
+        if search_engine=="Faiss":
+            self.search_engine = EmbeddingFaiss(explorer, wiki_index)
+        elif search_engine=="BM25":
+            self.search_engine = BM25(wiki_index)
         self.model = model
         self.max_step = max_step
-
-    def get_topk(self, argument, k=5):
-        top_k = self.explorer.similarity_search(argument, k=k)
-        documents = [doc.page_content for doc in top_k]
-        return documents
-
-    def get_search(self, argument):
-        document = self.explorer.similarity_search(argument, k=1)[0].page_content
-        document_content = " ".join(self.wiki_index[document])
-        return document_content
-
 
     def eval_hotpotqa(self, index):
         thought_id = 1
@@ -59,7 +56,6 @@ class ReactAgent():
         messages.append(make_message("system", f'You may take maximum of {self.max_step} steps\nHere are some examples:\n\n{fewshots_content}\n\n(END OF EXAMPLES)\n\n'))
         messages.append(make_message("system", f'The following are some experience you gather on a similar task of question answering using Wikipedia. Use these as references to help you perform this task:\n{INSIGHTS}\n\n'))
         messages.append(make_message("user", f"Now it's your turn!\nQuestion: {data.question}\n"))
-        messages.append(make_message("user", f'You can found supporting facts of answer in following documents: {supporting_facts}\n'))
         message_logs.append(log_message(messages))
 
         while(thought_id <= self.max_step):
@@ -78,15 +74,22 @@ class ReactAgent():
                 matches = match_search[0]
                 messages.append(make_message("assistant", f"Action {thought_id}: Search[{matches}]\n"))
                 message_logs.append(log_message(messages))
-                documents = self.get_topk(matches)
-                if matches.lower() == documents[0].lower():
+                if self.search_mode=="BM25":
+                    print("using BM25...")
+                    documents = self.search_engine.get_topk(matches)
                     search_documents.append(documents[0])
-                    messages.append(make_message("assistant", f"Observation {thought_id}: {self.get_search(documents[0])}\n"))
+                    messages.append(make_message("assistant", f"Observation {thought_id}: {self.search_engine.get_search(matches)}\n"))
                     message_logs.append(log_message(messages))
                 else:
-                    similar = ", ".join(documents)
-                    messages.append(make_message("assistant", f"Observation {thought_id}: Could not find [{matches}]. Similar: [{similar}]\n"))
-                    message_logs.append(log_message(messages))
+                    documents = self.search_engine.get_topk(matches)
+                    if matches.lower() == documents[0].lower():
+                        search_documents.append(documents[0])
+                        messages.append(make_message("assistant", f"Observation {thought_id}: {self.search_engine.get_search(documents[0])}\n"))
+                        message_logs.append(log_message(messages))
+                    else:
+                        similar = ", ".join(documents)
+                        messages.append(make_message("assistant", f"Observation {thought_id}: Could not find [{matches}]. Similar: [{similar}]\n"))
+                        message_logs.append(log_message(messages))
                 thought_id+=1
             elif len(match_finish)>0:
                 predict = match_finish[0]

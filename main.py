@@ -33,15 +33,22 @@ def main() -> None:
     # load model and data 
     config = load_config("./config/config.yaml")
     test_data = load_data(config['path']['test_path'])
-    embedding_model = load_embedding_model(config['path']['retriever_model'])
+    if config['params']['search_engine'] == 'Faiss':
+        print(f"Search engine: Faiss")
+        embedding_model = load_embedding_model(config['path']['retriever_model'])
+        explorer = load_explorer(config['path']['faiss_index_path'], embedding_model)
+    else:
+        print(f"Search engine: BM25")
+        embedding_model = None
+        explorer = None
     wiki_index = load_wiki_index(config['path']['wiki_index_path'])
-    explorer = load_explorer(config['path']['faiss_index_path'], embedding_model)
 
     test_df = make_df(test_data)
     # run evaluation
     agent = ReactAgent(dataset=test_data,
                     df=test_df,
                     wiki_index=wiki_index, 
+                    search_engine=config['params']['search_engine'],
                     explorer=explorer, 
                     model=config['params']['model'], 
                     max_step=config['params']['max_step'])
